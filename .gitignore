@@ -4,8 +4,6 @@ __pycache__/
 .venv/
 venv/
 
-# Firmware build outputs
-build/
 
 # Runtime logs
 logs/
