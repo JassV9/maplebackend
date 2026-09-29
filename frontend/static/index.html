@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maple Gateway</title>
+<style>
+  :root {
+    --bg: #f6f4ef; --card: #ffffff; --ink: #1f1c17; --muted: #6b655b; --line: #e4dfd4;
+    --ok: #1f8a4c; --ok-bg: #e3f4ea; --warn: #b26a00; --warn-bg: #fdf1dc;
+    --bad: #b3261e; --bad-bg: #fbe4e2; --accent: #a8501f; --test: #6a4fc2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151412; --card: #201e1b; --ink: #f1ede6; --muted: #a39c90; --line: #35322d;
+      --ok: #5ccf8d; --ok-bg: #173324; --warn: #f0b252; --warn-bg: #3a2c12;
+      --bad: #ff8a80; --bad-bg: #3d1a17; --accent: #e8905a; --test: #a896f0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 12px; }
+  h1 small { color: var(--muted); font-weight: 400; font-size: 14px; }
+  .banner { border-radius: 10px; padding: 14px 16px; font-size: 18px; font-weight: 600;
+            display: flex; gap: 12px; align-items: center; margin-bottom: 14px; }
+  .banner .dot { width: 14px; height: 14px; border-radius: 50%; background: currentColor; flex: none; }
+  .banner.ok { background: var(--ok-bg); color: var(--ok); }
+  .banner.ok .dot { animation: pulse 1s ease-out 1; }
+  .banner.warn { background: var(--warn-bg); color: var(--warn); }
+  .banner.bad { background: var(--bad-bg); color: var(--bad); }
+  .banner .sub { font-weight: 400; font-size: 14px; color: var(--ink); opacity: .8; }
+  @keyframes pulse { from { transform: scale(1.8); } to { transform: scale(1); } }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .value { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .value small { font-size: 14px; color: var(--muted); font-weight: 400; }
+  .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 6px; }
+  .bar > div { height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+  .bar.full > div { background: var(--bad); }
+  .alert { color: var(--bad); font-weight: 600; font-size: 13px; }
+  canvas { width: 100%; height: 260px; display: block; }
+  .row { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-bottom: 14px; }
+  @media (max-width: 760px) { .row { grid-template-columns: 1fr; } }
+  dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 14px; }
+  dt { color: var(--muted); } dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .tablewrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--card); }
+  tr.test td:nth-child(3) { color: var(--test); font-weight: 600; }
+  tr.foreign td { color: var(--muted); }
+  tr.bad td { color: var(--bad); }
+  tr.flash { animation: flash 1.2s; }
+  @keyframes flash { from { background: var(--ok-bg); } to { background: transparent; } }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  .test-progress { color: var(--test); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Maple Gateway <small>live LoRa load cell monitor</small></h1>
+
+  <div id="banner" class="banner bad"><span class="dot"></span>
+    <div><div id="bannerTitle">Connecting to the dashboard server...</div><div id="bannerSub" class="sub"></div></div>
+  </div>
+
+  <div class="grid">
+    <div class="card"><div class="label">Weight</div><div class="value" id="weight">--</div><div id="weightNote" class="label"></div></div>
+    <div class="card"><div class="label">Sap volume</div><div class="value" id="volume">--</div><div class="label" id="volumeGal"></div></div>
+    <div class="card"><div class="label">Bucket fill</div><div class="value" id="fill">--</div>
+      <div class="bar" id="fillBar"><div></div></div><div class="alert" id="fillAlert"></div></div>
+    <div class="card"><div class="label">Signal (RSSI)</div><div class="value" id="rssi">--</div><div class="label" id="rssiNote"></div></div>
+    <div class="card"><div class="label">SNR</div><div class="value" id="snr">--</div></div>
+    <div class="card"><div class="label">Last packet</div><div class="value" id="ago">--</div><div class="label" id="seq"></div></div>
+  </div>
+
+  <div class="row">
+    <div class="card">
+      <div class="label">Weight over time (kg)</div>
+      <canvas id="chart"></canvas>
+      <div class="legend"><span><i style="background:var(--accent)"></i>live reading</span>
+        <span><i style="background:var(--test)"></i>test loop</span></div>
+    </div>
+    <div class="card">
+      <div class="label" style="margin-bottom:6px">Gateway</div>
+      <dl>
+        <dt>Serial</dt><dd id="gwPort">--</dd>
+        <dt>Radio</dt><dd id="gwRadio">--</dd>
+        <dt>Uptime</dt><dd id="gwUptime">--</dd>
+        <dt>Our packets</dt><dd id="cOurs">0</dd>
+        <dt>Other LoRa</dt><dd id="cForeign">0</dd>
+        <dt>CRC errors</dt><dd id="cCrc">0</dd>
+        <dt>Lost (seq gaps)</dt><dd id="cLost">0</dd>
+        <dt>Last collection</dt><dd id="lastColl">--</dd>
+        <dt>Test loop</dt><dd id="testProg">not running</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label" style="margin-bottom:6px">Packet log (newest first)</div>
+    <div class="tablewrap" style="max-height:380px">
+      <table><thead><tr><th>Time</th><th>Node</th><th>Kind</th><th>Seq</th><th>Weight kg</th>
+        <th>Fill %</th><th>RSSI</th><th>SNR</th><th>Notes</th></tr></thead>
+        <tbody id="log"></tbody></table>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const ARRIVING_S = 15;           // "packets arriving" if one came in this recently
+const points = [];               // {t, w, test}
+let summary = null, lastOurs = null, clockSkew = 0;
+
+function fmtTime(ts) { return new Date(ts * 1000).toLocaleTimeString(); }
+function ago(ts) {
+  if (!ts) return "never";
+  const s = Math.max(0, Math.round(Date.now() / 1000 - clockSkew - ts));
+  return s < 60 ? s + " s ago" : s < 3600 ? Math.round(s / 60) + " min ago" : Math.round(s / 3600) + " h ago";
+}
+
+function handle(ev, live) {
+  if (ev.type === "packet") {
+    const p = ev.payload || {};
+    addRow(ev, live);
+    if (p.ours && ev.crc !== false) {
+      lastOurs = ev;
+      if (p.weight_kg != null && p.kind !== "nohx" && !(p.flags || []).includes("out_of_range")) {
+        points.push({ t: ev.ts, w: p.weight_kg, test: p.kind === "test" });
+        if (points.length > 600) points.shift();
+      }
+      showTiles(ev);
+    }
+  }
+}
+
+function showTiles(ev) {
+  const p = ev.payload;
+  if (p.kind === "nohx") {
+    $("weight").innerHTML = "--"; $("weightNote").textContent = "node alive, HX711 not found";
+    $("volume").textContent = "--"; $("volumeGal").textContent = ""; $("fill").textContent = "--";
+    $("fillBar").firstElementChild.style.width = "0";
+  } else {
+    $("weight").innerHTML = p.weight_kg.toFixed(3) + " <small>kg</small>";
+    $("weightNote").textContent = p.kind === "test" ? "TEST DATA (fake)" : (p.calibrated ? "" : "not calibrated yet");
+  }
+  if (p.volume_l != null) {
+    $("volume").innerHTML = p.volume_l.toFixed(2) + " <small>L</small>";
+    $("volumeGal").textContent = p.volume_gal.toFixed(2) + " US gal";
+    $("fill").textContent = p.fill_pct.toFixed(0) + "%";
+    $("fillBar").firstElementChild.style.width = Math.min(100, p.fill_pct) + "%";
+    $("fillBar").classList.toggle("full", p.bucket_full);
+  }
+  const ev2 = p.events || [];
+  $("fillAlert").textContent = p.bucket_full ? "BUCKET FULL" :
+      ev2.includes("sudden_drop") ? "Sudden drop: collected or knocked over?" : "";
+  $("rssi").innerHTML = ev.rssi.toFixed(0) + " <small>dBm</small>";
+  $("rssiNote").textContent = ev.rssi > -90 ? "strong" : ev.rssi > -110 ? "ok" : "weak";
+  $("snr").innerHTML = ev.snr.toFixed(1) + " <small>dB</small>";
+  $("seq").textContent = "node " + p.node_id + " seq " + p.seq;
+  $("cLost").textContent = p.lost_packets ?? 0;
+  $("lastColl").textContent = p.last_collection_ts ? fmtTime(p.last_collection_ts) : "none seen";
+  $("testProg").innerHTML = p.kind === "test"
+      ? `<span class="test-progress">${p.test_step}/${p.test_total}${p.test_step === p.test_total ? " done" : ""}</span>` : "not running";
+}
+
+function addRow(ev, live) {
+  const p = ev.payload || {};
+  const tr = document.createElement("tr");
+  const notes = [...(p.flags || []), ...(p.events || [])];
+  if (ev.crc === false) notes.unshift("CRC error");
+  if (!p.calibrated && p.ours && p.kind === "live") notes.push("uncalibrated");
+  tr.className = (ev.crc === false || notes.includes("out_of_range")) ? "bad" :
+                 !p.ours ? "foreign" : p.kind === "test" ? "test" : "";
+  if (live) tr.classList.add("flash");
+  const w = p.weight_kg != null ? p.weight_kg.toFixed(3) : "";
+  const cells = [fmtTime(ev.ts), p.node_id || "other", p.kind || (p.ours ? "" : "foreign"),
+    p.seq ?? "", w, p.fill_pct != null ? p.fill_pct.toFixed(0) : "",
+    ev.rssi?.toFixed(0), ev.snr?.toFixed(1), notes.join(", ") || (p.ours ? "" : (ev.raw || "").slice(0, 40))];
+  for (const c of cells) { const td = document.createElement("td"); td.textContent = c ?? ""; tr.appendChild(td); }
+  const log = $("log");
+  log.prepend(tr);
+  while (log.children.length > 200) log.lastChild.remove();
+}
+
+function showSummary() {
+  if (!summary) return;
+  const s = summary.serial, gw = summary.gateway, c = summary.counts;
+  $("gwPort").textContent = (s.port || "--") + (s.connected ? " (connected)" : "");
+  const st = gw.last_status, boot = gw.last_boot;
+  $("gwRadio").textContent = st ? st.radio : boot ? boot.radio : "--";
+  $("gwUptime").textContent = st ? st.uptime + " s" : "--";
+  $("cOurs").textContent = c.ours; $("cForeign").textContent = c.foreign; $("cCrc").textContent = c.crc_err;
+  $("ago").textContent = ago(summary.last_packet_ts);
+
+  const b = $("banner");
+  const since = summary.last_packet_ts ? Date.now() / 1000 - clockSkew - summary.last_packet_ts : Infinity;
+  const gwAlive = st && (Date.now() / 1000 - clockSkew - st.ts) < 12;
+  if (!s.connected) {
+    b.className = "banner bad"; $("bannerTitle").textContent = "Gateway board not connected";
+    $("bannerSub").textContent = s.error || "Plug in the gateway LoRa32 over USB.";
+  } else if (st && st.radio !== "ok") {
+    b.className = "banner bad"; $("bannerTitle").textContent = "Gateway radio failed to start";
+    $("bannerSub").textContent = "Check the antenna and reflash the gateway.";
+  } else if (since < ARRIVING_S) {
+    const test = lastOurs && lastOurs.payload.kind === "test";
+    b.className = "banner ok";
+    $("bannerTitle").textContent = test ? "Packets arriving (TEST LOOP)" :
+        lastOurs && lastOurs.payload.kind === "nohx" ? "Packets arriving, but node has no load cell" : "Packets arriving from the load cell";
+    $("bannerSub").textContent = "Last one " + ago(summary.last_packet_ts) + " on " + s.port;
+  } else {
+    b.className = "banner warn";
+    $("bannerTitle").textContent = summary.last_packet_ts ? "No packets in the last " + ARRIVING_S + " s" : "Gateway listening, no packets yet";
+    $("bannerSub").textContent = gwAlive || !st ? "Is the node powered? Press PRG on the node for a test loop."
+                                                : "Gateway went quiet. Check the USB cable.";
+  }
+}
+
+function drawChart() {
+  const cv = $("chart"), dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext("2d"); g.scale(dpr, dpr);
+  const css = getComputedStyle(document.documentElement);
+  const col = n => css.getPropertyValue(n).trim();
+  g.clearRect(0, 0, W, H);
+  const L = 42, R = 8, T = 8, B = 22;
+  if (!points.length) {
+    g.fillStyle = col("--muted"); g.font = "13px system-ui";
+    g.fillText("Waiting for readings... (press PRG on the node to send a test loop)", L, H / 2);
+    return;
+  }
+  const t1 = Math.max(points[points.length - 1].t, Date.now() / 1000 - clockSkew);
+  const t0 = Math.min(points[0].t, t1 - 60);
+  let lo = Math.min(0, ...points.map(p => p.w)), hi = Math.max(1, ...points.map(p => p.w));
+  hi += (hi - lo) * 0.1;
+  const x = t => L + (W - L - R) * (t - t0) / (t1 - t0 || 1);
+  const y = w => T + (H - T - B) * (1 - (w - lo) / (hi - lo));
+  g.strokeStyle = col("--line"); g.fillStyle = col("--muted"); g.font = "11px system-ui"; g.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const v = lo + (hi - lo) * i / 4, yy = y(v);
+    g.beginPath(); g.moveTo(L, yy); g.lineTo(W - R, yy); g.stroke();
+    g.fillText(v.toFixed(1), 4, yy + 4);
+  }
+  g.fillText(new Date(t0 * 1000).toLocaleTimeString(), L, H - 6);
+  const endLbl = new Date(t1 * 1000).toLocaleTimeString();
+  g.fillText(endLbl, W - R - g.measureText(endLbl).width, H - 6);
+  g.lineWidth = 2;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i];
+    g.strokeStyle = col(b.test ? "--test" : "--accent");
+    g.beginPath(); g.moveTo(x(a.t), y(a.w)); g.lineTo(x(b.t), y(b.w)); g.stroke();
+  }
+  for (const p of points) {
+    g.fillStyle = col(p.test ? "--test" : "--accent");
+    g.beginPath(); g.arc(x(p.t), y(p.w), 2.5, 0, 7); g.fill();
+  }
+}
+
+async function start() {
+  try {
+    const snap = await (await fetch("/api/state")).json();
+    summary = snap.summary; clockSkew = Date.now() / 1000 - summary.now;
+    for (const ev of snap.history) handle(ev, false);
+  } catch (e) { /* server not up yet; EventSource will retry */ }
+  const es = new EventSource("/events");
+  es.onmessage = m => {
+    const d = JSON.parse(m.data);
+    summary = d.summary; clockSkew = Date.now() / 1000 - summary.now;
+    handle(d.event, true);
+    showSummary(); drawChart();
+  };
+  es.onerror = () => {
+    $("banner").className = "banner bad";
+    $("bannerTitle").textContent = "Lost connection to the dashboard server";
+    $("bannerSub").textContent = "Is server.py still running? Retrying...";
+  };
+  showSummary(); drawChart();
+  setInterval(() => { showSummary(); drawChart(); }, 1000);
+  window.addEventListener("resize", drawChart);
+}
+start();
+</script>
+</body>
+</html>
