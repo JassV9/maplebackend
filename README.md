@@ -80,6 +80,17 @@ Every packet is also appended to `frontend/logs/packets-YYYYMMDD.csv`. No extra 
 
 Run the tests: `cd frontend; python -m unittest discover -s tests -v`
 
+### Sending readings to the TBD dashboard (Postgres)
+
+`server.py` can also forward every gateway line to the TBD worker API (the `worker/` app in the MapleSugaring_TBD repo), which stores it in Postgres and drives the real dashboard:
+
+```powershell
+python server.py --forward http://localhost:4000                 # worker running on this PC (npm run dev in MapleSugaring_TBD)
+python server.py --forward https://<vm-host>/api --ingest-key KEY # worker on the VM, through the web app's /api proxy
+```
+
+Lines are batched every 2 s to `<url>/ingest`. If the worker is unreachable they are saved to `frontend/logs/forward-spool.jsonl` and re-sent once it answers, so the local dashboard keeps working and nothing is lost. `--gateway-id` sets the gateway name (default `GW-<computer name>`); the forwarding status shows up in `/api/state` under `forward`.
+
 ## Using the node
 
 On boot the OLED shows a **self-test** for 2.5 s (HX711 OK / NOT FOUND, Radio OK / FAIL); the same result is printed on serial as a `selftest` JSON line. After that it shows the live weight.

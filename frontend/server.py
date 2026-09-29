@@ -4,6 +4,7 @@ live dashboard at http://localhost:8000
     python server.py                 # auto-find the gateway COM port
     python server.py --port COM6     # or name it
     python server.py --demo          # fake gateway data, no hardware needed
+    python server.py --forward http://localhost:4000   # also send readings to the TBD worker API
 
 No third-party packages required (pyserial is used if installed).
 """
@@ -14,10 +15,12 @@ import json
 import os
 import queue
 import random
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from forwarder import Forwarder
 from packet_parser import DEFAULT_BUCKET_LITERS, MetricsTracker, parse_line
 import serial_io
 
@@ -31,8 +34,9 @@ SILENCE_RECONNECT_S = 15
 class Hub:
     """Shared state between the serial reader thread and HTTP clients."""
 
-    def __init__(self, bucket_liters):
+    def __init__(self, bucket_liters, forwarder=None):
         self.lock = threading.Lock()
+        self.forwarder = forwarder   # optional: sends lines on to the worker API
         self.tracker = MetricsTracker(bucket_liters)
         self.history = []            # recent events for newly opened pages
         self.clients = []            # one queue per SSE connection
@@ -68,6 +72,8 @@ class Hub:
                 self.gateway["last_status"] = event
             elif t == "boot":
                 self.gateway["last_boot"] = event
+            if self.forwarder:
+                self.forwarder.submit(event)
             self.history.append(event)
             del self.history[:-HISTORY]
             msg = json.dumps({"event": event, "summary": self._summary()})
@@ -91,7 +97,8 @@ class Hub:
     def _summary(self):
         return {"serial": self.serial, "gateway": self.gateway, "counts": self.counts,
                 "last_packet_ts": self.last_packet_ts, "now": time.time(),
-                "bucket_liters": self.tracker.bucket_liters}
+                "bucket_liters": self.tracker.bucket_liters,
+                "forward": dict(self.forwarder.stats, url=self.forwarder.url) if self.forwarder else None}
 
     def snapshot(self):
         with self.lock:
@@ -230,6 +237,12 @@ def main(argv=None):
                     help="bucket capacity used for fill %% (default 3 US gal)")
     ap.add_argument("--demo", action="store_true", help="fake data, no board needed")
     ap.add_argument("--list", action="store_true", help="list serial ports and exit")
+    ap.add_argument("--forward", metavar="URL",
+                    help="also POST every gateway line to the TBD worker, e.g. http://localhost:4000")
+    ap.add_argument("--ingest-key", default=os.environ.get("INGEST_KEY"),
+                    help="X-Ingest-Key for the worker (default: INGEST_KEY env var)")
+    ap.add_argument("--gateway-id", default="GW-" + socket.gethostname().upper()[:40],
+                    help="name this gateway reports as (default: GW-<computer name>)")
     args = ap.parse_args(argv)
 
     if args.list:
@@ -237,7 +250,13 @@ def main(argv=None):
             print(p, "-", d)
         return
 
-    hub = Hub(args.bucket_liters)
+    forwarder = None
+    os.makedirs(LOG_DIR, exist_ok=True)
+    if args.forward:
+        forwarder = Forwarder(args.forward, args.gateway_id, args.ingest_key,
+                              spool_path=os.path.join(LOG_DIR, "forward-spool.jsonl")).start()
+        print("Forwarding to %s as %s" % (forwarder.url, args.gateway_id))
+    hub = Hub(args.bucket_liters, forwarder)
     stop = threading.Event()
     target = demo_loop if args.demo else serial_loop
     targs = (hub, stop) if args.demo else (hub, args.port, stop)
@@ -253,6 +272,8 @@ def main(argv=None):
         pass
     finally:
         stop.set()
+        if forwarder:
+            forwarder.stop()
 
 
 if __name__ == "__main__":
