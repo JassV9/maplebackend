@@ -48,7 +48,7 @@ Left side, load cell to amp:
 | Green | GRN | A+ (signal +) |
 | (none / shield) | YLW | leave empty; only used if the cable has a yellow or bare shield wire |
 
-Notes: the amp's holes are empty (no header pins), so solder a 4-pin header on the VCC/DAT/CLK/GND side to plug it into the breadboard. The load cell's thin wires can be soldered straight into the left pads, or soldered to a 5-pin header. If the load cell wire colors don't match (some cells use different colors), check its datasheet for E+/E-/S+/S-. If weight goes *down* when you press, white and green are swapped; calibration fixes the sign anyway. Leave the antenna connected on both boards before powering them (transmitting without an antenna can damage the SX1262).
+Notes: the amp's holes are empty (no header pins), so solder a 4-pin header on the VCC/DAT/CLK/GND side to plug it into the breadboard. The load cell's thin wires can be soldered straight into the left pads, or soldered to a 5-pin header. If the load cell wire colors don't match (some cells use different colors), check its datasheet for E+/E-/S+/S-. Our cell's counts go *down* under load, so the node sketch flips the sign (`LOAD_SIGN -1`). If weight ever reads negative, flip `LOAD_SIGN` to `1` and reflash (or swap white and green). Leave the antenna connected on both boards before powering them (transmitting without an antenna can damage the SX1262).
 
 ## Flash the boards
 
@@ -99,14 +99,13 @@ On boot the OLED shows a **self-test** for 2.5 s (HX711 OK / NOT FOUND, Radio OK
 
 | Press | Does |
 |---|---|
-| short tap (< 1 s) | **Test loop**: sends 20 fake readings 1.5 s apart, ramping 0.25 to 9.25 kg then dropping to 0.15 kg (looks like a collection). Works without a load cell. |
-| hold 1.5 s then release | **Tare** (zero). Take everything off the scale first. |
+| press and release | **Tare** (zero). Take everything off the scale first. |
 | hold 5 s then release | **Calibrate** with a 1.000 kg known weight on the scale (change `CAL_MASS_KG` in the sketch for a different weight). |
 
 The OLED tells you what releasing will do while you hold it. Tare and calibration are saved in flash, so they survive power cycles.
 
 Serial commands on the node (115200 baud, newline), e.g. `arduino-cli monitor -p COM7 -c baudrate=115200`:
-`tare`, `cal 2.5` (calibrate with 2.5 kg on the scale), `scale 42000` (set counts per kg directly), `test`, `info`.
+`tare`, `cal 2.5` (calibrate with 2.5 kg on the scale), `scale 42000` (set counts per kg directly), `info`.
 
 If the HX711 is missing, the node still sends `"k":"nohx"` heartbeats so you can tell the radio link works and the problem is the wiring. It re-checks for the HX711 every 5 s.
 
@@ -117,7 +116,7 @@ Node to gateway over LoRa (compact JSON, about 60 bytes):
 ```json
 {"id":"LC01","k":"live","s":17,"w":3.412,"r":151234,"hx":1}
 ```
-`id` node id, `k` kind (`live`, `test`, `nohx`), `s` sequence number, `w` weight in kg, `r` raw HX711 counts after tare, `hx` HX711 found, `uncal:1` if never calibrated. Test packets add `i`/`of` (step 3 of 20).
+`id` node id, `k` kind (`live`, `nohx`), `s` sequence number, `w` weight in kg, `r` raw HX711 counts after tare, `hx` HX711 found, `uncal:1` if never calibrated.
 
 Gateway to PC over USB serial, one JSON per line: `boot`, `status` (every 5 s), and `packet`:
 
@@ -146,10 +145,9 @@ Not done yet: battery voltage (needs the board revision's ADC control pin checke
 
 1. Plug in the **gateway** board only. `cd frontend; python server.py`, open http://localhost:8000. Banner should go **amber: "Gateway listening, no packets yet"**. The gateway OLED says `GATEWAY (RX)` and `listening...`.
 2. Power the **node** (USB or battery) with nothing wired to it. Self-test shows `HX711: NOT FOUND`, `Radio: OK`. Within 5 s the banner goes **green: "Packets arriving, but node has no load cell"**. This proves the radio link.
-3. Tap **PRG** on the node. The banner says **TEST LOOP**, the chart draws a purple ramp, the log fills with `test` rows, and the last step triggers the "Sudden drop" alert and a Last collection time.
-4. Unplug the node, wire the HX711 and load cell per the tables above, plug it back in. Self-test should say `HX711: OK`.
-5. With the scale empty, **hold PRG 1.5 s** to tare. Put a known 1 kg weight on it and **hold PRG 5 s** to calibrate. Check the reading with a second known weight.
-6. Watch the orange live line on the chart track what you put on the plate.
+3. Unplug the node, wire the HX711 and load cell per the tables above, plug it back in. Self-test should say `HX711: OK`.
+4. With the scale empty, **press PRG** to tare. Put a known 1 kg weight on it and **hold PRG 5 s** to calibrate. Check the reading with a second known weight.
+5. Watch the orange live line on the chart track what you put on the plate.
 
 Troubleshooting:
 - Banner red "not connected": wrong board plugged in, or another program holds the COM port. Try `python server.py --list` and `--port`.

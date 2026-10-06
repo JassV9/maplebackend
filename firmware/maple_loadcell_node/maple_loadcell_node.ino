@@ -6,16 +6,15 @@
 // sends compact JSON over LoRa every SEND_INTERVAL_MS:
 //
 //   {"id":"LC01","k":"live","s":17,"w":3.412,"r":151234,"hx":1}
-//     id = node id, k = kind (live | test | nohx), s = sequence number,
+//     id = node id, k = kind (live | nohx), s = sequence number,
 //     w = weight in kg, r = raw HX711 counts (tare removed), hx = HX711 found
 //
 // PRG button (GPIO0):
-//   short press (< 1 s)   -> send a TEST LOOP of fake weights (no load cell needed)
-//   hold 1.5 s, release   -> TARE (zero the scale; take everything off first)
+//   press and release     -> TARE (zero the scale; take everything off first)
 //   hold 5 s, release     -> CALIBRATE using CAL_MASS_KG sitting on the scale
 //
 // Serial commands (115200 baud, newline): tare | cal <kg> | scale <counts/kg>
-//                                          | test | info
+//                                          | info
 
 #include <RadioLib.h>
 #include <U8g2lib.h>
@@ -41,6 +40,10 @@
 // HX711 wiring (see README). Free header pins, not used by radio/OLED.
 #define HX_DOUT  5   // HX711 DAT
 #define HX_SCK   6   // HX711 CLK
+
+// Our load cell's counts go DOWN as weight goes on, so flip them. If weight
+// ever reads negative again (cell remounted or WHT/GRN rewired), set this to 1.
+#define LOAD_SIGN  -1
 
 // Heltec V3 pins
 #define BUTTON_PIN 0
@@ -75,12 +78,6 @@ uint32_t seq = 0, txOk = 0, txFail = 0;
 unsigned long lastSendMs = 0, lastHxRetryMs = 0;
 char statusMsg[24] = "";
 unsigned long statusUntil = 0;
-
-// Test loop state
-#define TEST_STEPS 20
-#define TEST_SPACING_MS 1500
-int testStep = -1;            // -1 = not running
-unsigned long lastTestMs = 0;
 
 // ---------------------------------------------------------------- HX711
 portMUX_TYPE hxMux = portMUX_INITIALIZER_UNLOCKED;
@@ -137,6 +134,11 @@ bool hxDetect() {
   return hxReadOnce(v);
 }
 
+// Counts above the tare point, positive when weight is added.
+long hxNet(long avg) {
+  return LOAD_SIGN * (avg - tareOffset);
+}
+
 // ---------------------------------------------------------------- helpers
 void flash(const char* msg, unsigned long ms = 2500) {
   strncpy(statusMsg, msg, sizeof(statusMsg) - 1);
@@ -147,7 +149,9 @@ void flash(const char* msg, unsigned long ms = 2500) {
 void loadSettings() {
   prefs.begin("maple", true);
   tareOffset = prefs.getLong("off", 0);
-  scaleCountsPerKg = prefs.getFloat("scale", DEFAULT_SCALE);
+  // The sign lives in LOAD_SIGN now. A calibration saved by older firmware
+  // could be negative (that was how it fixed the sign), so drop its sign.
+  scaleCountsPerKg = fabsf(prefs.getFloat("scale", DEFAULT_SCALE));
   calibrated = prefs.getBool("cal", false);
   prefs.end();
 }
@@ -173,8 +177,9 @@ void doCalibrate(float knownKg) {
   long avg;
   if (knownKg <= 0) { Serial.println("CAL needs a positive weight in kg"); return; }
   if (!hxOk || !hxReadAvg(16, avg)) { Serial.println("CAL failed: HX711 not responding"); flash("CAL FAILED"); return; }
-  long net = avg - tareOffset;
+  long net = hxNet(avg);
   if (labs(net) < 100) { Serial.println("CAL failed: no load detected. Tare empty, then add the weight."); flash("CAL: NO LOAD"); return; }
+  if (net < 0) { Serial.println("CAL failed: weight reads negative. Flip LOAD_SIGN in the sketch and reflash."); flash("CAL: NEGATIVE"); return; }
   scaleCountsPerKg = net / knownKg;
   calibrated = true;
   saveSettings();
@@ -190,15 +195,10 @@ void printInfo() {
                 (unsigned long)txOk, (unsigned long)txFail);
 }
 
-bool sendPacket(const char* kind, float w, long raw, int step = -1) {
+bool sendPacket(const char* kind, float w, long raw) {
   char buf[128];
-  if (step >= 0) {
-    snprintf(buf, sizeof(buf), "{\"id\":\"%s\",\"k\":\"%s\",\"s\":%lu,\"w\":%.3f,\"i\":%d,\"of\":%d}",
-             NODE_ID, kind, (unsigned long)seq, w, step + 1, TEST_STEPS);
-  } else {
-    snprintf(buf, sizeof(buf), "{\"id\":\"%s\",\"k\":\"%s\",\"s\":%lu,\"w\":%.3f,\"r\":%ld,\"hx\":%d%s}",
-             NODE_ID, kind, (unsigned long)seq, w, raw, hxOk ? 1 : 0, calibrated ? "" : ",\"uncal\":1");
-  }
+  snprintf(buf, sizeof(buf), "{\"id\":\"%s\",\"k\":\"%s\",\"s\":%lu,\"w\":%.3f,\"r\":%ld,\"hx\":%d%s}",
+           NODE_ID, kind, (unsigned long)seq, w, raw, hxOk ? 1 : 0, calibrated ? "" : ",\"uncal\":1");
   seq++;
   if (!radioOk) { txFail++; Serial.printf("[TX skipped, radio down] %s\n", buf); return false; }
   digitalWrite(LED_PIN, HIGH);
@@ -210,13 +210,6 @@ bool sendPacket(const char* kind, float w, long raw, int step = -1) {
   return false;
 }
 
-// Fake weight for the test loop: ramp up like a filling bucket, then drop
-// back near zero on the last two steps (looks like a collection).
-float testWeight(int step) {
-  if (step >= TEST_STEPS - 2) return 0.150;
-  return 0.5f * step + 0.25f;  // 0.25 .. 9.25 kg
-}
-
 void drawOled(long holdMs) {
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_7x13B_tf);
@@ -226,10 +219,8 @@ void drawOled(long holdMs) {
 
   if (holdMs > 0) {  // button being held: say what release will do
     u8g2.setFont(u8g2_font_7x13B_tf);
-    if (holdMs < 1000)       u8g2.drawStr(0, 32, "release: TEST");
-    else if (holdMs < 1500)  u8g2.drawStr(0, 32, "keep holding...");
-    else if (holdMs < 5000)  u8g2.drawStr(0, 32, "release: TARE");
-    else                     u8g2.drawStr(0, 32, "release: CAL");
+    if (holdMs < 5000) u8g2.drawStr(0, 32, "release: TARE");
+    else               u8g2.drawStr(0, 32, "release: CAL");
     u8g2.setFont(u8g2_font_6x10_tf);
     snprintf(line, sizeof(line), "held %.1fs", holdMs / 1000.0);
     u8g2.drawStr(0, 48, line);
@@ -238,14 +229,7 @@ void drawOled(long holdMs) {
     return;
   }
 
-  if (testStep >= 0) {
-    u8g2.setFont(u8g2_font_7x13B_tf);
-    snprintf(line, sizeof(line), "TEST %d/%d", testStep + 1, TEST_STEPS);
-    u8g2.drawStr(0, 32, line);
-    u8g2.setFont(u8g2_font_6x10_tf);
-    snprintf(line, sizeof(line), "fake w: %.2f kg", testWeight(testStep));
-    u8g2.drawStr(0, 48, line);
-  } else if (hxOk) {
+  if (hxOk) {
     u8g2.setFont(u8g2_font_logisoso16_tf);
     snprintf(line, sizeof(line), "%.3f kg", weightKg);
     u8g2.drawStr(0, 34, line);
@@ -307,11 +291,10 @@ void handleCommand(String cmd) {
   else if (cmd.startsWith("cal ")) doCalibrate(cmd.substring(4).toFloat());
   else if (cmd.startsWith("scale ")) {
     float s = cmd.substring(6).toFloat();
-    if (s != 0) { scaleCountsPerKg = s; calibrated = true; saveSettings(); Serial.printf("scale set to %.2f\n", s); }
+    if (s != 0) { scaleCountsPerKg = fabsf(s); calibrated = true; saveSettings(); Serial.printf("scale set to %.2f\n", scaleCountsPerKg); }
   }
-  else if (cmd == "test") { testStep = 0; lastTestMs = 0; }
   else if (cmd == "info") printInfo();
-  else Serial.println("commands: tare | cal <kg> | scale <counts/kg> | test | info");
+  else Serial.println("commands: tare | cal <kg> | scale <counts/kg> | info");
 }
 
 // ---------------------------------------------------------------- main
@@ -332,7 +315,7 @@ void setup() {
   loadSettings();
   selfTest();
   printInfo();
-  Serial.println("commands: tare | cal <kg> | scale <counts/kg> | test | info");
+  Serial.println("commands: tare | cal <kg> | scale <counts/kg> | info");
 }
 
 void loop() {
@@ -351,22 +334,8 @@ void loop() {
     if (down) { drawOled(held); delay(20); return; }
     pressed = false;
     if (held < 30) {}                                  // bounce
-    else if (held < 1000) { Serial.println("BUTTON: test loop"); testStep = 0; lastTestMs = 0; }
     else if (held >= 5000) doCalibrate(CAL_MASS_KG);
-    else if (held >= 1500) doTare();
-  }
-
-  // Test loop runs instead of live readings
-  if (testStep >= 0) {
-    if (millis() - lastTestMs >= TEST_SPACING_MS) {
-      lastTestMs = millis();
-      sendPacket("test", testWeight(testStep), 0, testStep);
-      drawOled(0);
-      testStep++;
-      if (testStep >= TEST_STEPS) { testStep = -1; flash("TEST DONE"); lastSendMs = millis(); }
-    }
-    delay(10);
-    return;
+    else doTare();
   }
 
   // HX711 plugged in after boot? retry detection every 5 s
@@ -379,7 +348,7 @@ void loop() {
   long avg;
   if (hxOk) {
     if (hxReadAvg(HX_SAMPLES, avg)) {
-      rawNet = avg - tareOffset;
+      rawNet = hxNet(avg);
       weightKg = rawNet / scaleCountsPerKg;
     } else {
       hxOk = false;

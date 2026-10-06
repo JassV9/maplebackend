@@ -8,13 +8,13 @@
   :root {
     --bg: #f6f4ef; --card: #ffffff; --ink: #1f1c17; --muted: #6b655b; --line: #e4dfd4;
     --ok: #1f8a4c; --ok-bg: #e3f4ea; --warn: #b26a00; --warn-bg: #fdf1dc;
-    --bad: #b3261e; --bad-bg: #fbe4e2; --accent: #a8501f; --test: #6a4fc2;
+    --bad: #b3261e; --bad-bg: #fbe4e2; --accent: #a8501f;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #151412; --card: #201e1b; --ink: #f1ede6; --muted: #a39c90; --line: #35322d;
       --ok: #5ccf8d; --ok-bg: #173324; --warn: #f0b252; --warn-bg: #3a2c12;
-      --bad: #ff8a80; --bad-bg: #3d1a17; --accent: #e8905a; --test: #a896f0;
+      --bad: #ff8a80; --bad-bg: #3d1a17; --accent: #e8905a;
     }
   }
   * { box-sizing: border-box; }
@@ -50,14 +50,12 @@
   table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
   th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
   th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--card); }
-  tr.test td:nth-child(3) { color: var(--test); font-weight: 600; }
   tr.foreign td { color: var(--muted); }
   tr.bad td { color: var(--bad); }
   tr.flash { animation: flash 1.2s; }
   @keyframes flash { from { background: var(--ok-bg); } to { background: transparent; } }
   .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
-  .test-progress { color: var(--test); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -82,8 +80,7 @@
     <div class="card">
       <div class="label">Weight over time (kg)</div>
       <canvas id="chart"></canvas>
-      <div class="legend"><span><i style="background:var(--accent)"></i>live reading</span>
-        <span><i style="background:var(--test)"></i>test loop</span></div>
+      <div class="legend"><span><i style="background:var(--accent)"></i>live reading</span></div>
     </div>
     <div class="card">
       <div class="label" style="margin-bottom:6px">Gateway</div>
@@ -96,7 +93,6 @@
         <dt>CRC errors</dt><dd id="cCrc">0</dd>
         <dt>Lost (seq gaps)</dt><dd id="cLost">0</dd>
         <dt>Last collection</dt><dd id="lastColl">--</dd>
-        <dt>Test loop</dt><dd id="testProg">not running</dd>
       </dl>
     </div>
   </div>
@@ -114,7 +110,7 @@
 <script>
 const $ = id => document.getElementById(id);
 const ARRIVING_S = 15;           // "packets arriving" if one came in this recently
-const points = [];               // {t, w, test}
+const points = [];               // {t, w}
 let summary = null, lastOurs = null, clockSkew = 0;
 
 function fmtTime(ts) { return new Date(ts * 1000).toLocaleTimeString(); }
@@ -131,7 +127,7 @@ function handle(ev, live) {
     if (p.ours && ev.crc !== false) {
       lastOurs = ev;
       if (p.weight_kg != null && p.kind !== "nohx" && !(p.flags || []).includes("out_of_range")) {
-        points.push({ t: ev.ts, w: p.weight_kg, test: p.kind === "test" });
+        points.push({ t: ev.ts, w: p.weight_kg });
         if (points.length > 600) points.shift();
       }
       showTiles(ev);
@@ -147,7 +143,7 @@ function showTiles(ev) {
     $("fillBar").firstElementChild.style.width = "0";
   } else {
     $("weight").innerHTML = p.weight_kg.toFixed(3) + " <small>kg</small>";
-    $("weightNote").textContent = p.kind === "test" ? "TEST DATA (fake)" : (p.calibrated ? "" : "not calibrated yet");
+    $("weightNote").textContent = p.calibrated ? "" : "not calibrated yet";
   }
   if (p.volume_l != null) {
     $("volume").innerHTML = p.volume_l.toFixed(2) + " <small>L</small>";
@@ -165,8 +161,6 @@ function showTiles(ev) {
   $("seq").textContent = "node " + p.node_id + " seq " + p.seq;
   $("cLost").textContent = p.lost_packets ?? 0;
   $("lastColl").textContent = p.last_collection_ts ? fmtTime(p.last_collection_ts) : "none seen";
-  $("testProg").innerHTML = p.kind === "test"
-      ? `<span class="test-progress">${p.test_step}/${p.test_total}${p.test_step === p.test_total ? " done" : ""}</span>` : "not running";
 }
 
 function addRow(ev, live) {
@@ -176,7 +170,7 @@ function addRow(ev, live) {
   if (ev.crc === false) notes.unshift("CRC error");
   if (!p.calibrated && p.ours && p.kind === "live") notes.push("uncalibrated");
   tr.className = (ev.crc === false || notes.includes("out_of_range")) ? "bad" :
-                 !p.ours ? "foreign" : p.kind === "test" ? "test" : "";
+                 !p.ours ? "foreign" : "";
   if (live) tr.classList.add("flash");
   const w = p.weight_kg != null ? p.weight_kg.toFixed(3) : "";
   const cells = [fmtTime(ev.ts), p.node_id || "other", p.kind || (p.ours ? "" : "foreign"),
@@ -208,15 +202,14 @@ function showSummary() {
     b.className = "banner bad"; $("bannerTitle").textContent = "Gateway radio failed to start";
     $("bannerSub").textContent = "Check the antenna and reflash the gateway.";
   } else if (since < ARRIVING_S) {
-    const test = lastOurs && lastOurs.payload.kind === "test";
     b.className = "banner ok";
-    $("bannerTitle").textContent = test ? "Packets arriving (TEST LOOP)" :
+    $("bannerTitle").textContent =
         lastOurs && lastOurs.payload.kind === "nohx" ? "Packets arriving, but node has no load cell" : "Packets arriving from the load cell";
     $("bannerSub").textContent = "Last one " + ago(summary.last_packet_ts) + " on " + s.port;
   } else {
     b.className = "banner warn";
     $("bannerTitle").textContent = summary.last_packet_ts ? "No packets in the last " + ARRIVING_S + " s" : "Gateway listening, no packets yet";
-    $("bannerSub").textContent = gwAlive || !st ? "Is the node powered? Press PRG on the node for a test loop."
+    $("bannerSub").textContent = gwAlive || !st ? "Is the node powered? It sends a reading every 5 s."
                                                 : "Gateway went quiet. Check the USB cable.";
   }
 }
@@ -232,7 +225,7 @@ function drawChart() {
   const L = 42, R = 8, T = 8, B = 22;
   if (!points.length) {
     g.fillStyle = col("--muted"); g.font = "13px system-ui";
-    g.fillText("Waiting for readings... (press PRG on the node to send a test loop)", L, H / 2);
+    g.fillText("Waiting for readings from the node...", L, H / 2);
     return;
   }
   const t1 = Math.max(points[points.length - 1].t, Date.now() / 1000 - clockSkew);
@@ -251,13 +244,13 @@ function drawChart() {
   const endLbl = new Date(t1 * 1000).toLocaleTimeString();
   g.fillText(endLbl, W - R - g.measureText(endLbl).width, H - 6);
   g.lineWidth = 2;
+  g.strokeStyle = col("--accent");
   for (let i = 1; i < points.length; i++) {
     const a = points[i - 1], b = points[i];
-    g.strokeStyle = col(b.test ? "--test" : "--accent");
     g.beginPath(); g.moveTo(x(a.t), y(a.w)); g.lineTo(x(b.t), y(b.w)); g.stroke();
   }
+  g.fillStyle = col("--accent");
   for (const p of points) {
-    g.fillStyle = col(p.test ? "--test" : "--accent");
     g.beginPath(); g.arc(x(p.t), y(p.w), 2.5, 0, 7); g.fill();
   }
 }

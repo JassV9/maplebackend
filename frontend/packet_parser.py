@@ -72,9 +72,6 @@ def parse_payload(raw):
     result["hx711"] = bool(data.get("hx", 1))
     result["calibrated"] = not data.get("uncal", 0)
     result["raw_counts"] = _as_int(data.get("r"))
-    if "i" in data:
-        result["test_step"] = _as_int(data.get("i"))
-        result["test_total"] = _as_int(data.get("of"))
 
     try:
         weight = float(data["w"])

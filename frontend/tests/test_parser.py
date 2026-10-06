@@ -40,10 +40,9 @@ class ParseLineTests(unittest.TestCase):
     def test_gateway_escaping_round_trips(self):
         # Exactly what the gateway firmware prints for a node packet.
         line = '{"type":"packet","n":1,"rssi":-41.0,"snr":9.75,"len":44,"crc":true,' \
-               '"raw":"{\\"id\\":\\"LC01\\",\\"k\\":\\"test\\",\\"s\\":0,\\"w\\":0.250,\\"i\\":1,\\"of\\":20}"}'
+               '"raw":"{\\"id\\":\\"LC01\\",\\"k\\":\\"live\\",\\"s\\":0,\\"w\\":0.250,\\"r\\":10500,\\"hx\\":1}"}'
         p = parse_line(line)["payload"]
-        self.assertEqual(p["kind"], "test")
-        self.assertEqual((p["test_step"], p["test_total"]), (1, 20))
+        self.assertEqual((p["kind"], p["weight_kg"], p["raw_counts"]), ("live", 0.25, 10500))
 
     def test_uncalibrated_flag(self):
         p = parse_payload('{"id":"LC01","k":"live","s":1,"w":0.1,"r":10,"hx":1,"uncal":1}')
